@@ -31,25 +31,33 @@ const server = net.createServer((socket) => {
 
     socket.on('end', () => {
         console.log('Cliente desconectado');
-        // Limpar rooms
-        for (const code in rooms) {
-            const room = rooms[code];
-            if (room.host === socket) {
-                if (room.guest) {
-                    room.guest.write('OPPONENT_LEFT\0');
-                }
-                delete rooms[code];
-            } else if (room.guest === socket) {
-                room.host.write('OPPONENT_LEFT\0');
-                room.guest = null;
-            }
-        }
+        handleDisconnect(socket);
     });
 
     socket.on('error', (err) => {
         console.log('Erro:', err.message);
+        handleDisconnect(socket);
     });
 });
+
+function handleDisconnect(socket) {
+    for (const code in rooms) {
+        const room = rooms[code];
+        if (room.host === socket) {
+            if (room.guest) {
+                room.guest.write('OPPONENT_LEFT\0');
+            }
+            delete rooms[code];
+        } else if (room.guest === socket) {
+            if (room.host) {
+                room.host.write('OPPONENT_LEFT\0');
+            }
+            room.guest = null;
+            room.guestLobbyReady = false;
+            room.guestTeamReady = false;
+        }
+    }
+}
 
 function handleMessage(socket, msg) {
     // CREATE_ROOM:PlayerName
@@ -57,7 +65,6 @@ function handleMessage(socket, msg) {
         const playerName = msg.split(':')[1];
         let code = generateRoomCode();
         
-        // Garantir código único
         while (rooms[code]) {
             code = generateRoomCode();
         }
@@ -66,7 +73,11 @@ function handleMessage(socket, msg) {
             host: socket,
             hostName: playerName,
             guest: null,
-            guestName: null
+            guestName: null,
+            hostLobbyReady: false,
+            guestLobbyReady: false,
+            hostTeamReady: false,
+            guestTeamReady: false
         };
 
         socket.roomCode = code;
@@ -105,18 +116,21 @@ function handleMessage(socket, msg) {
         if (!room) return;
 
         if (socket === room.host) {
-            room.hostReady = true;
+            room.hostLobbyReady = true;
             if (room.guest) {
                 room.guest.write('OPPONENT_LOBBY_READY\0');
             }
         } else if (socket === room.guest) {
-            room.guestReady = true;
-            room.host.write('OPPONENT_LOBBY_READY\0');
+            room.guestLobbyReady = true;
+            if (room.host) {
+                room.host.write('OPPONENT_LOBBY_READY\0');
+            }
         }
 
-        if (room.hostReady && room.guestReady) {
+        if (room.hostLobbyReady && room.guestLobbyReady) {
             room.host.write('BOTH_LOBBY_READY\0');
             room.guest.write('BOTH_LOBBY_READY\0');
+            console.log(`Sala ${room.code}: Ambos prontos no lobby!`);
         }
     }
 
@@ -143,38 +157,37 @@ function handleMessage(socket, msg) {
             }
         } else if (socket === room.guest) {
             room.guestTeamReady = true;
-            room.host.write('OPPONENT_TEAM_READY\0');
+            if (room.host) {
+                room.host.write('OPPONENT_TEAM_READY\0');
+            }
         }
 
         if (room.hostTeamReady && room.guestTeamReady) {
             room.host.write('BOTH_TEAMS_READY\0');
             room.guest.write('BOTH_TEAMS_READY\0');
+            console.log(`Sala ${room.code}: Ambos prontos com times!`);
         }
     }
-        // No handleMessage, adicione:
-else if (msg.startsWith('INPUT:') || msg.startsWith('BALL:') || 
-         msg.startsWith('GOAL:') || msg.startsWith('SCORE:') || 
-         msg.startsWith('TIME:') || msg.startsWith('END:') || 
-         msg.startsWith('POS:')) {
-    const room = findRoomBySocket(socket);
-    if (!room) return;
-    const target = socket === room.host ? room.guest : room.host;
-    if (target) target.write(msg + '\0');
-}
 
     // LEAVE_ROOM
     else if (msg === 'LEAVE_ROOM') {
+        handleDisconnect(socket);
+    }
+
+    // Encaminhar mensagens do jogo (Frame 6)
+    else if (msg.startsWith('INPUT:') || 
+             msg.startsWith('BALL:') || 
+             msg.startsWith('GOAL:') || 
+             msg.startsWith('SCORE:') || 
+             msg.startsWith('TIME:') || 
+             msg.startsWith('END:') || 
+             msg.startsWith('POS:') || 
+             msg === 'LEAVE_GAME') {
         const room = findRoomBySocket(socket);
         if (!room) return;
-
-        if (socket === room.host) {
-            if (room.guest) {
-                room.guest.write('OPPONENT_LEFT\0');
-            }
-            delete rooms[room.code];
-        } else if (socket === room.guest) {
-            room.host.write('OPPONENT_LEFT\0');
-            room.guest = null;
+        const target = socket === room.host ? room.guest : room.host;
+        if (target) {
+            target.write(msg + '\0');
         }
     }
 }
