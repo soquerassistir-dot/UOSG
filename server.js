@@ -151,6 +151,16 @@ function handleMessage(socket, msg) {
             room.guest.write('BOTH_TEAMS_READY\0');
         }
     }
+        // No handleMessage, adicione:
+else if (msg.startsWith('INPUT:') || msg.startsWith('BALL:') || 
+         msg.startsWith('GOAL:') || msg.startsWith('SCORE:') || 
+         msg.startsWith('TIME:') || msg.startsWith('END:') || 
+         msg.startsWith('POS:')) {
+    const room = findRoomBySocket(socket);
+    if (!room) return;
+    const target = socket === room.host ? room.guest : room.host;
+    if (target) target.write(msg + '\0');
+}
 
     // LEAVE_ROOM
     else if (msg === 'LEAVE_ROOM') {
